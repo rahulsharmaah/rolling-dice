@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-canvas: oklch(100% 0 0);
+  --color-panel: oklch(96% 0.01 260);
+  --color-ink: oklch(16% 0.02 265);
+  --color-primary: oklch(55% 0.14 265);
+  --color-accent: oklch(60% 0.20 245);
+  --color-pip: oklch(40% 0.12 48);
+  --color-dice: oklch(75% 0.04 75);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --color-canvas: oklch(18% 0.03 262);
+    --color-panel: oklch(25% 0.02 260);
+    --color-ink: oklch(95% 0.02 265);
+    --color-primary: oklch(65% 0.14 265);
+    --color-accent: oklch(73% 0.20 245);
+    --color-pip: oklch(40% 0.12 48);
+    --color-dice: oklch(85% 0.04 75);
+  }
+}
+html, body { height: 100%; background: theme('colors.canvas'); color: theme('colors.ink'); }
