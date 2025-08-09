@@ -265,8 +265,7 @@ export default function SpindleDice() {
       updateVoices();
       window.speechSynthesis.onvoiceschanged = updateVoices;
       return () => {
-        // @ts-expect-error allow cleanup
-        window.speechSynthesis.onvoiceschanged = null;
+        window.speechSynthesis.onvoiceschanged = undefined as any;
       };
     } catch {}
   }, []);
