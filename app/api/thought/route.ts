@@ -5,8 +5,8 @@ import path from "node:path";
 export const runtime = "nodejs";
 
 type Body = {
-  sequence: string; // e.g. "2431"
-  humanSeq?: string; // e.g. "2 → 4 → 3 → 1"
+  sequence: string;
+  humanSeq?: string;
   title?: string;
   language?: "en" | "hi";
 };
@@ -33,33 +33,37 @@ async function parseDocx(buffer: Buffer): Promise<string | null> {
   }
 }
 
-async function readKnowledgeDoc(): Promise<string> {
+type KnowledgeDoc = { text: string; sourcePath: string | null };
+
+async function readKnowledgeDoc(): Promise<KnowledgeDoc> {
   try {
     const cwd = process.cwd();
     const dir = path.join(cwd, "knowledge");
-    const fromEnv = process.env.KNOWLEDGE_PATH ? path.isAbsolute(process.env.KNOWLEDGE_PATH) ? process.env.KNOWLEDGE_PATH : path.join(cwd, process.env.KNOWLEDGE_PATH) : null;
+    const fromEnv = process.env.KNOWLEDGE_PATH
+      ? path.isAbsolute(process.env.KNOWLEDGE_PATH)
+        ? process.env.KNOWLEDGE_PATH
+        : path.join(cwd, process.env.KNOWLEDGE_PATH)
+      : null;
+
     const candidates = [
-      // explicit env path first
       fromEnv,
-      // preferred names inside knowledge/
       path.join(dir, "thoughts.md"),
       path.join(dir, "thoughts.pdf"),
       path.join(dir, "thoughts.docx"),
-      // root-level preferred names
       path.join(cwd, "dice_thoughts.md"),
       path.join(cwd, "dice_thoughts.pdf"),
       path.join(cwd, "dice_thoughts.docx"),
     ].filter(Boolean) as string[];
+
     let filePath: string | null = null;
     for (const p of candidates) {
       try {
         await fs.access(p);
         filePath = p;
         break;
-      } catch {}
+      } catch { }
     }
     if (!filePath) {
-      // fallback: first .md/.pdf/.docx in knowledge/ then project root
       const entriesK = await fs.readdir(dir).catch(() => [] as string[]);
       const matchK = entriesK.find((f) => /\.(md|pdf|docx)$/i.test(f));
       if (matchK) filePath = path.join(dir, matchK);
@@ -69,33 +73,51 @@ async function readKnowledgeDoc(): Promise<string> {
         if (matchR) filePath = path.join(cwd, matchR);
       }
     }
-    if (!filePath) return "";
+    if (!filePath) return { text: "", sourcePath: null };
 
     const ext = path.extname(filePath).toLowerCase();
     const buf = await fs.readFile(filePath);
-    if (ext === ".md") return buf.toString("utf8");
-    if (ext === ".pdf") return (await parsePdf(buf)) || "";
-    if (ext === ".docx") return (await parseDocx(buf)) || "";
-    return "";
+    if (ext === ".md") return { text: buf.toString("utf8"), sourcePath: filePath };
+    if (ext === ".pdf") return { text: (await parsePdf(buf)) || "", sourcePath: filePath };
+    if (ext === ".docx") return { text: (await parseDocx(buf)) || "", sourcePath: filePath };
+    return { text: "", sourcePath: filePath };
   } catch {
-    return "";
+    return { text: "", sourcePath: null };
   }
 }
 
-async function generateWithGemini(prompt: string): Promise<string | null> {
+type GeminiOptions = {
+  prompt: string;
+  systemInstruction?: string;
+  temperature?: number;
+  topK?: number;
+  topP?: number;
+};
+
+async function generateWithGemini(opts: GeminiOptions): Promise<string | null> {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return null;
-    // Lazy import so the project builds even if SDK isn't installed
     const mod = await import("@google/generative-ai").catch(() => null as any);
     if (!mod) return null;
     const { GoogleGenerativeAI } = mod as any;
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const result = await model.generateContent(prompt);
-    const text = result?.response?.text?.() ?? result?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (typeof text === "string" && text.trim()) return text.trim();
-    return null;
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      ...(opts.systemInstruction ? { systemInstruction: opts.systemInstruction } : {}),
+    });
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
+      generationConfig: {
+        temperature: opts.temperature ?? 0,
+        topK: opts.topK ?? 1,
+        topP: opts.topP ?? 0.9,
+      },
+    });
+    const text =
+      result?.response?.text?.() ??
+      result?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+    return typeof text === "string" && text.trim() ? text.trim() : null;
   } catch {
     return null;
   }
@@ -103,48 +125,167 @@ async function generateWithGemini(prompt: string): Promise<string | null> {
 
 function fallbackThought(sequence: string, language: "en" | "hi"): string {
   const hyphen = sequence.split("").join("-");
-  if (language === "hi") {
-    return `विचार संख्या ${hyphen}`;
+  return language === "hi"
+    ? `विचार संख्या ${hyphen}`
+    : `Thought number ${hyphen}`;
+}
+
+function extractExactAnswersGroupedByChapter(docText: string, candidateKeys: string[]): string | null {
+  if (!docText.trim()) return null;
+  const lines = docText.split(/\r?\n/);
+
+  const isHeading = (line: string) => {
+    const trimmed = line.trim();
+    return (
+      /^#{1,6}\s+/.test(trimmed) ||
+      /^chapter\b/i.test(trimmed) ||
+      /^(?:section|part)\b/i.test(trimmed) ||
+      /^\d+\s*[\.)-]?\s+/.test(trimmed)
+    );
+  };
+
+  const buildPatterns = (seq: string) => {
+    const digits = seq.split("");
+    if (digits.some((d) => !/[1-4]/.test(d))) return [];
+    const reps = [
+      digits.join(""),
+      digits.join("\\s*-\\s*"),
+      digits.join("\\s*(?:→|->)\\s*"),
+      digits.join("\\s*,\\s*"),
+      digits.join("\\s+"),
+    ];
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const patterns: RegExp[] = [];
+    for (const rep of reps) {
+      // 1) Line-head anchored: starts the line (optionally 'Sequence ' prefix) and not followed by a separator+digit chain
+      patterns.push(new RegExp(`^\\s*(?:[Ss]equence\\s*)?${rep}(?!\\s*[,→-]\\s*[1-4])(?![1-4])(?:\\s*[:：–—-]|\\s|$)`, "i"));
+      // 2) Token-level: not preceded by a digit and not followed by separator+digit or digit
+      patterns.push(new RegExp(`(?:^|[^1-4])(${rep})(?!\\s*[,→-]\\s*[1-4])(?![1-4])`, "i"));
+    }
+    // Also include exact token equality
+    patterns.push(new RegExp(`^\\s*${esc(seq)}\\s*$`, "i"));
+    return patterns;
+  };
+
+  const keyPatterns = candidateKeys.flatMap(buildPatterns);
+  const buckets: { chapter: string; answers: string[] }[] = [];
+  let currentChapter = "Untitled";
+  let currentIndex = -1;
+  const seenBlocks = new Set<string>();
+
+  const collectBlock = (start: number) => {
+    const acc: string[] = [];
+    let j = start;
+    while (j < lines.length && !isHeading(lines[j]) && lines[j].trim()) {
+      acc.push(lines[j]);
+      j++;
+    }
+    return { block: acc.join("\n"), end: j };
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    if (isHeading(lines[i])) {
+      currentChapter = lines[i].trim();
+      buckets.push({ chapter: currentChapter, answers: [] });
+      currentIndex = buckets.length - 1;
+      continue;
+    }
+    if (keyPatterns.some((re) => re.test(lines[i]))) {
+      const { block, end } = collectBlock(i);
+      if (block && !seenBlocks.has(block)) {
+        if (currentIndex === -1) {
+          buckets.push({ chapter: currentChapter, answers: [] });
+          currentIndex = 0;
+        }
+        buckets[currentIndex].answers.push(block);
+        seenBlocks.add(block);
+      }
+      i = end - 1;
+    }
   }
-  return `Thought number ${hyphen}`;
+
+  const nonEmpty = buckets.filter((b) => b.answers.length > 0);
+  if (nonEmpty.length === 0) return null;
+  const parts: string[] = [];
+  for (const b of nonEmpty) {
+    for (const ans of b.answers) {
+      parts.push(`Chapter: ${b.chapter}\nAnswer:\n${ans}`);
+    }
+  }
+  return parts.join("\n\n");
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as Body;
     const sequence = (body.sequence || "").replace(/[^1-4]/g, "");
-    const language: "en" | "hi" = body.language === "hi" ? "hi" : "en";
-    const title = (body.title || "").slice(0, 200);
+    const language = body.language === "hi" ? "hi" : "en";
     const humanSeq = body.humanSeq || sequence.split("").join(" → ");
-    const keyNoSep = sequence;
-    const keyHyphen = sequence.split("").join("-");
-    const keyArrow = humanSeq;
 
     if (!sequence) {
-      return NextResponse.json({ text: fallbackThought("", language), from: "fallback" });
+      return NextResponse.json({
+        text: fallbackThought("", language),
+        from: "fallback",
+      });
     }
 
-    const knowledge = await readKnowledgeDoc();
-    const sys = language === "hi" ? "आप एक सहायक विश्लेषक हैं जो संदर्भ दस्तावेज़ से कुंजी खोजकर मनुष्यों को समझ में आने वाला उत्तर लिखते हैं।" : "You are a helpful analyst who searches a reference document for keys and writes a human-friendly answer.";
-    const ask = language === "hi"
-      ? `कार्य: नीचे दिए गए दस्तावेज़ को देख कर इस अनुक्रम के लिए (एक या दो वाक्य में) स्पष्ट, मानवीय भाषा में विचार लिखें।
-कुंजियाँ जिनके आधार पर मिलान करें: "${keyNoSep}", "${keyHyphen}", "${keyArrow}"।
-यदि दस्तावेज़ में इस अनुक्रम का स्पष्ट विचार नहीं मिलता, तो पहले यह लिखें: "${humanSeq} के लिए कोई स्पष्ट प्रविष्टि नहीं मिली।" और फिर दस्तावेज़ की भावना के अनुरूप एक संक्षिप्त, व्यावहारिक विचार दें।
-उत्तर केवल अंतिम विचार के रूप में दें (अनावश्यक प्रस्तावना/शीर्षक नहीं)। भाषा: हिंदी।`
-      : `Task: Using the document below, produce a clear, human-friendly thought (1–2 sentences) for the sequence.
-Match using keys: "${keyNoSep}", "${keyHyphen}", "${keyArrow}".
-If no explicit entry exists for this sequence, first state: "No explicit entry found for ${humanSeq}." then provide a concise, practical thought aligned with the document's spirit.
-Return only the final thought (no headers). Language: English.`;
-    const titleLine = title ? (language === "hi" ? `प्रश्न: ${title}\n` : `Question: ${title}\n`) : "";
-    const prompt = `${sys}\n${ask}\n${titleLine}\nSequence: ${humanSeq}\n\n--- Document ---\n${knowledge}\n-----------------\n`;
+    const knowledgeObj = await readKnowledgeDoc();
+    const knowledge = knowledgeObj.text;
+    const candidateKeys = Array.from(
+      new Set([
+        sequence,
+        sequence.split("").join("-"),
+        sequence.split("").join(" → "),
+        sequence.split("").join(" "),
+        sequence.split("").join(","),
+        sequence.split("").join(", "),
+      ])
+    );
 
-    const ai = await generateWithGemini(prompt);
-    const text = (ai && ai.trim()) || fallbackThought(sequence, language);
+    // First try regex-based direct extraction
+    const extracted = extractExactAnswersGroupedByChapter(knowledge, candidateKeys);
+    if (extracted) {
+      return NextResponse.json({ text: extracted, from: "document" });
+    }
 
-    return NextResponse.json({ text, from: ai ? "gemini" : "fallback", prompt });
-  } catch (err) {
-    return NextResponse.json({ text: fallbackThought("", "en"), from: "error" }, { status: 200 });
+    // If not found, try Gemini AI search in document
+    const sysPrompt =
+      language === "hi"
+        ? "आपका कार्य: केवल दस्तावेज़ से मिलान करने वाले exact (verbatim) अनुच्छेद/पंक्तियाँ निकालना। कोई पैराफ्रेस नहीं। फॉर्मेट का कड़ाई से पालन करें।"
+        : "Your job: extract ONLY exact (verbatim) lines/paragraphs from the document that match. No paraphrasing. Follow the output format strictly.";
+
+    const truncatedDoc = knowledge.length > 200_000 ? `${knowledge.slice(0, 200_000)}\n... [TRUNCATED]` : knowledge;
+    const prompt = `Sequence: ${humanSeq}
+Equivalent formats: ${candidateKeys.join(", ")}
+
+BEGIN DOCUMENT
+${truncatedDoc}
+END DOCUMENT
+
+RULES
+1) Find exact (verbatim) occurrences of ONLY this sequence (any of the equivalent formats). Do NOT match if the sequence is part of a longer sequence (e.g., 32,1, 1-32, 132, etc.).
+2) For each match, take the nearest preceding heading as Chapter.
+3) Output plain text blocks:
+Chapter: <heading line>
+Answer:
+<exact line or paragraph>
+
+If none found, output exactly: ${language === "hi" ? `"${humanSeq} के लिए कोई स्पष्ट प्रविष्टि नहीं मिली।"` : `"No explicit entry found for ${humanSeq}."`}`;
+
+    const ai = await generateWithGemini({ prompt, systemInstruction: sysPrompt, temperature: 0, topK: 1, topP: 0.9 });
+    return NextResponse.json({
+      text: ai || fallbackThought(sequence, language),
+      from: ai ? "gemini" : "fallback",
+      debug: {
+        knowledgePath: knowledgeObj.sourcePath,
+        knowledgeChars: knowledge.length,
+        usedExtraction: false,
+      }
+    });
+  } catch {
+    return NextResponse.json(
+      { text: fallbackThought("", "en"), from: "error" },
+      { status: 200 }
+    );
   }
 }
-
-
