@@ -112,60 +112,64 @@ export default function HoraaLookupPage() {
 
       {/* Controls */}
       <div className="relative z-20 w-full max-w-3xl rounded-xl2 border border-white/10 bg-panel/90 p-4 shadow">
-        <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex flex-col gap-3">
           <input
-            className="flex-1 rounded-xl2 border border-white/10 bg-panel px-3 py-2 text-sm outline-none"
+            className="w-full rounded-xl2 border border-white/10 bg-panel px-3 py-2 text-sm outline-none"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={placeholder}
             aria-label={placeholder}
           />
-          <div className="flex items-center gap-2">
-            {(["en", "hi"] as const).map((l) => (
+          <div className="flex flex-col sm:flex-row items-center gap-2">
+            <div className="flex items-center gap-2">
+              {(["en", "hi"] as const).map((l) => (
+                <button
+                  key={l}
+                  className={`rounded-xl2 px-3 py-2 text-sm border ${language === l ? "bg-primary text-black border-transparent" : "bg-panel text-ink/90 border-white/10"}`}
+                  onClick={() => setLanguage(l)}
+                >
+                  {l === "en" ? "EN" : "HI"}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
               <button
-                key={l}
-                className={`rounded-xl2 px-3 py-2 text-sm border ${language === l ? "bg-primary text-black border-transparent" : "bg-panel text-ink/90 border-white/10"}`}
-                onClick={() => setLanguage(l)}
+                className="rounded-xl2 bg-accent px-4 py-2 text-black text-sm disabled:opacity-50 w-full sm:w-auto"
+                onClick={handleLookup}
+                disabled={loading}
               >
-                {l === "en" ? "EN" : "HI"}
+                {loading ? (language === "hi" ? "खोज रहा है…" : "Fetching…") : (language === "hi" ? "ढूँढें" : "Open Book")}
               </button>
-            ))}
-            <button
-              className="rounded-xl2 bg-accent px-4 py-2 text-black text-sm disabled:opacity-50"
-              onClick={handleLookup}
-              disabled={loading}
-            >
-              {loading ? (language === "hi" ? "खोज रहा है…" : "Fetching…") : (language === "hi" ? "ढूँढें" : "Open Book")}
-            </button>
-            <button
-              className="rounded-xl2 bg-primary px-4 py-2 text-black text-sm disabled:opacity-50"
-              onClick={async () => {
-                try {
-                  setLoadingDoc(true);
-                  setError("");
-                  const res = await fetch("/api/book", { method: "GET" });
-                  const data = await res.json().catch(() => null as any);
-                  const pages = (data?.pages as string[]) || [];
-                  if (!pages.length) {
-                    setError(language === "hi" ? "दस्तावेज़ उपलब्ध नहीं" : "Document not available");
-                    setFullPages(null);
-                    setPageIndex(0);
-                  } else {
-                    setFullPages(pages);
-                    setPageIndex(0);
-                    setIsOpening(true);
-                    window.setTimeout(() => { setIsOpening(false); setIsOpen(true); }, 400);
+              <button
+                className="rounded-xl2 bg-primary px-4 py-2 text-black text-sm disabled:opacity-50 w-full sm:w-auto"
+                onClick={async () => {
+                  try {
+                    setLoadingDoc(true);
+                    setError("");
+                    const res = await fetch("/api/book", { method: "GET" });
+                    const data = await res.json().catch(() => null as any);
+                    const pages = (data?.pages as string[]) || [];
+                    if (!pages.length) {
+                      setError(language === "hi" ? "दस्तावेज़ उपलब्ध नहीं" : "Document not available");
+                      setFullPages(null);
+                      setPageIndex(0);
+                    } else {
+                      setFullPages(pages);
+                      setPageIndex(0);
+                      setIsOpening(true);
+                      window.setTimeout(() => { setIsOpening(false); setIsOpen(true); }, 400);
+                    }
+                  } catch {
+                    setError(language === "hi" ? "दस्तावेज़ लोड नहीं हुआ" : "Failed to load document");
+                  } finally {
+                    setLoadingDoc(false);
                   }
-                } catch {
-                  setError(language === "hi" ? "दस्तावेज़ लोड नहीं हुआ" : "Failed to load document");
-                } finally {
-                  setLoadingDoc(false);
-                }
-              }}
-              disabled={loadingDoc}
-            >
-              {loadingDoc ? (language === "hi" ? "लोड हो रहा…" : "Loading…") : (language === "hi" ? "पूरा दस्तावेज़" : "Load Full Doc")}
-            </button>
+                }}
+                disabled={loadingDoc}
+              >
+                {loadingDoc ? (language === "hi" ? "लोड हो रहा…" : "Loading…") : (language === "hi" ? "पूरा दस्तावेज़" : "Load Full Doc")}
+              </button>
+            </div>
           </div>
         </div>
         {error && (
@@ -176,7 +180,7 @@ export default function HoraaLookupPage() {
       {/* Book container */}
       <div className={`book-perspective w-full flex justify-center mt-2`}>
         <div className={`book ${isOpening ? "opening" : ""} ${isOpen ? "open" : ""}`}>
-          {/* Left page */}
+          {/* Left page - hidden on mobile */}
           <div className="page left">
             <div className="page-inner">
               <div className="folio-title">रामसत जी</div>
@@ -190,7 +194,7 @@ export default function HoraaLookupPage() {
               </div>
             </div>
           </div>
-          {/* Right page */}
+          {/* Right page - main content */}
           <div className="page right">
             <div className="page-inner">
               <div className="folio-title">रामसत जी</div>
@@ -304,6 +308,43 @@ export default function HoraaLookupPage() {
         .ornament { position: absolute; bottom: 14px; left: 0; right: 0; display: flex; justify-content: center; }
         .knot { width: 120px; height: 10px; background: linear-gradient(90deg, rgba(180,120,60,0.5), rgba(220,170,90,0.8), rgba(180,120,60,0.5)); border-radius: 999px; box-shadow: 0 0 12px rgba(200,150,70,0.4); animation: glow 3s ease-in-out infinite; }
         @keyframes glow { 0%,100% { opacity: 0.7 } 50% { opacity: 1 } }
+
+        /* Mobile responsive styles */
+        @media (max-width: 768px) {
+          .book {
+            width: 92vw;
+            height: 75vh;
+          }
+          .page {
+            width: 100% !important;
+            left: 0 !important;
+            right: 0 !important;
+            border-radius: 12px !important;
+            border: 1px solid rgba(120,80,40,0.35) !important;
+          }
+          .page.left {
+            display: none;
+          }
+          .page.right {
+            display: block;
+          }
+          .page .page-inner {
+            padding: 16px 18px;
+          }
+          .page-seq {
+            font-size: clamp(20px, 6vw, 32px);
+          }
+          .content {
+            font-size: 13px;
+            line-height: 1.5;
+          }
+          .folio-title {
+            font-size: 10px;
+          }
+          .page-heading {
+            font-size: 11px;
+          }
+        }
       `}</style>
     </div>
   );
