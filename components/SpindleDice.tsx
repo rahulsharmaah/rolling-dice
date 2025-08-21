@@ -353,6 +353,30 @@ export default function SpindleDice() {
   return (
     <div className="relative flex min-h-screen flex-col">
       <div ref={mountRef} className="relative flex-1 flex items-center justify-center overflow-hidden">
+        {/* Background Book UI */}
+        <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none select-none">
+          <div className="book-perspective opacity-[0.12] hidden sm:block">
+            <div className="book open">
+              <div className="page left">
+                <div className="page-inner">
+                  <div className="folio-title">रामसत जी</div>
+                  <div className="page-heading">Sequence</div>
+                  <div className="page-seq text-2xl font-black tracking-tight">{sequence}</div>
+                </div>
+              </div>
+              <div className="page right">
+                <div className="page-inner">
+                  <div className="folio-title">रामसत जी</div>
+                  <div className="page-heading">Thought</div>
+                  <div className="content whitespace-pre-wrap text-sm max-h-[46vh] overflow-hidden">
+                    {thought}
+                  </div>
+                </div>
+              </div>
+              <div className="cover" />
+            </div>
+          </div>
+        </div>
         <button
           className="absolute top-3 right-3 z-10 rounded-xl2 border border-white/10 bg-panel px-3 py-2 text-sm"
           onClick={() => setHistOpen(v => !v)}
@@ -472,6 +496,19 @@ export default function SpindleDice() {
           will-change: transform;
           text-shadow: 0 1px 2px rgba(0,0,0,0.08);
         }
+        /* Background book styles */
+        .book-perspective { perspective: 1000px; transform: scale(0.9); }
+        .book { position: relative; width: min(920px, 96vw); height: min(520px, 64vh); transform-style: preserve-3d; }
+        .book .cover { position: absolute; inset: 0; background: linear-gradient(145deg, #6b4f3b 0%, #3e2d23 100%); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.2), inset 0 0 0 2px rgba(255,215,0,0.12); transform-origin: left center; transform: rotateY(-2deg) translateZ(2px); }
+        .book.open .cover { transform: rotateY(-178deg) translateZ(2px); opacity: 0; }
+        .page { position: absolute; top: 0; bottom: 0; width: 50%; padding: 18px; background: radial-gradient(ellipse at 30% 20%, rgba(255,255,255,0.7), rgba(245,235,215,0.7) 60%, rgba(240,220,190,0.7)); border: 1px solid rgba(120,80,40,0.25); box-shadow: inset 0 0 60px rgba(0,0,0,0.04); overflow: hidden; }
+        .page.left { left: 0; border-right-width: 0; border-top-left-radius: 12px; border-bottom-left-radius: 12px; }
+        .page.right { right: 0; border-left-width: 0; border-top-right-radius: 12px; border-bottom-right-radius: 12px; }
+        .page .page-inner { position: relative; width: 100%; height: 100%; padding: 18px 22px; color: #2b1d16; font-family: Georgia, "Times New Roman", serif; }
+        .folio-title { position: absolute; top: 8px; left: 0; right: 0; text-align: center; font-weight: 900; letter-spacing: 0.06em; color: rgba(60,43,34,0.8); text-transform: uppercase; font-size: 10px; }
+        .page-heading { font-weight: 800; letter-spacing: 0.04em; color: #5a3f32; text-transform: uppercase; font-size: 11px; opacity: 0.85; }
+        .page-seq { margin-top: 8px; font-size: clamp(18px, 3.6vw, 34px); font-weight: 900; color: #3c2b22; }
+        .content { margin-top: 8px; font-size: 13px; line-height: 1.55; }
       `}</style>
     </div>
   );
